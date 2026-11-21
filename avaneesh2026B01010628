@@ -1,0 +1,124 @@
+"""
+Clean the dirty cafe sales dataset (beginner friendly).
+Only uses pandas and numpy.
+
+How to run:
+    1. Put this file in the same folder as dirty_cafe_sales.csv
+    2. Run:  python clean_cafe_sales.py
+"""
+
+import pandas as pd
+import numpy as np
+
+# ---------------------------------------------------------------
+# STEP 1: Load the data
+# ---------------------------------------------------------------
+df = pd.read_csv("dirty_cafe_sales.csv")
+
+print("Rows and columns before cleaning:", df.shape)
+print("\nMissing values before cleaning:")
+print(df.isna().sum())
+
+# ---------------------------------------------------------------
+# STEP 2: Replace junk values ("ERROR", "UNKNOWN", blanks) with NaN
+# NaN is pandas' standard way of saying "this value is missing".
+# ---------------------------------------------------------------
+df = df.replace(["ERROR", "UNKNOWN", ""], np.nan)
+
+# Remove accidental spaces around text values (e.g. " Coffee ")
+text_columns = ["Transaction ID", "Item", "Payment Method", "Location"]
+for col in text_columns:
+    df[col] = df[col].str.strip()
+
+# ---------------------------------------------------------------
+# STEP 3: Fix data types
+# Numbers were read as text because of the "ERROR"/"UNKNOWN" words.
+# errors="coerce" turns anything that is not a number into NaN.
+# ---------------------------------------------------------------
+number_columns = ["Quantity", "Price Per Unit", "Total Spent"]
+for col in number_columns:
+    df[col] = pd.to_numeric(df[col], errors="coerce")
+
+df["Transaction Date"] = pd.to_datetime(df["Transaction Date"], errors="coerce")
+
+# ---------------------------------------------------------------
+# STEP 4: Remove duplicate rows
+# Every Transaction ID should appear only once.
+# ---------------------------------------------------------------
+df = df.drop_duplicates(subset="Transaction ID")
+
+# ---------------------------------------------------------------
+# STEP 5: Recover missing Price Per Unit from the Item name
+# Each item always has the same price (Coffee = 2.0, Tea = 1.5 ...),
+# so we can build a price menu from the rows that are complete.
+# ---------------------------------------------------------------
+price_menu = (
+    df.dropna(subset=["Item", "Price Per Unit"])
+      .groupby("Item")["Price Per Unit"]
+      .first()
+)
+print("\nPrice menu found in the data:")
+print(price_menu)
+
+# .map() looks up each item's price in the menu.
+# .fillna() puts that price only where the price is missing.
+df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Item"].map(price_menu))
+
+# ---------------------------------------------------------------
+# STEP 6: Recover missing numbers using the formula
+#         Total Spent = Quantity * Price Per Unit
+# ---------------------------------------------------------------
+# Missing Total Spent -> Quantity * Price
+df["Total Spent"] = df["Total Spent"].fillna(df["Quantity"] * df["Price Per Unit"])
+
+# Missing Quantity -> Total / Price
+df["Quantity"] = df["Quantity"].fillna(df["Total Spent"] / df["Price Per Unit"])
+
+# Missing Price -> Total / Quantity
+df["Price Per Unit"] = df["Price Per Unit"].fillna(df["Total Spent"] / df["Quantity"])
+
+# ---------------------------------------------------------------
+# STEP 7: Recover missing Item from the Price (only when it is unique)
+# Prices 1.0, 1.5, 2.0 and 5.0 belong to exactly one item each.
+# Prices 3.0 (Cake/Juice) and 4.0 (Smoothie/Sandwich) are shared, so
+# we cannot be sure, and we leave those as missing.
+# ---------------------------------------------------------------
+items_per_price = price_menu.reset_index().groupby("Price Per Unit")["Item"].agg(list)
+unique_price_to_item = {
+    price: items[0] for price, items in items_per_price.items() if len(items) == 1
+}
+df["Item"] = df["Item"].fillna(df["Price Per Unit"].map(unique_price_to_item))
+
+# ---------------------------------------------------------------
+# STEP 8: Fill the remaining missing text values with "Unknown"
+# Payment Method and Location cannot be calculated, and many rows
+# are missing them, so we keep the rows and label them clearly.
+# ---------------------------------------------------------------
+for col in ["Item", "Payment Method", "Location"]:
+    df[col] = df[col].fillna("Unknown")
+
+# ---------------------------------------------------------------
+# STEP 9: Drop rows that are still unusable
+# - no date -> cannot be used for any time analysis
+# - no Quantity or Total Spent -> cannot be recovered
+# ---------------------------------------------------------------
+df = df.dropna(subset=["Transaction Date", "Quantity", "Price Per Unit", "Total Spent"])
+
+# Quantity is a whole number of items, so store it as int
+df["Quantity"] = df["Quantity"].astype(int)
+
+# ---------------------------------------------------------------
+# STEP 10: Final check and save
+# ---------------------------------------------------------------
+df = df.reset_index(drop=True)
+
+print("\nRows and columns after cleaning:", df.shape)
+print("\nMissing values after cleaning:")
+print(df.isna().sum())
+print("\nData types:")
+print(df.dtypes)
+print("\nFirst 5 rows of clean data:")
+print(df.head())
+
+df.to_csv(r"C:\Users\avane\Downloads\clean_cafe_sales.csv", index=False)
+print("\nSaved the cleaned data to clean_cafe_sales.csv")
